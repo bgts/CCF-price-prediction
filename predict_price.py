@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
+import matplotlib.pyplot as plt  
 import pandas as pd
 import numpy as np
 from sklearn.pipeline import Pipeline  
 from sklearn.linear_model import LinearRegression  
 from sklearn.preprocessing import PolynomialFeatures
 import datetime
-from statsmodels.tsa.arima_model import ARMA
-#删掉原训练集、测试集文件的第一行
+from scipy.interpolate import interp1d
+'''删掉原训练集、测试集文件的第一行'''
+def rmse(y_test, y):''''' 均方误差根 '''    
+    return sp.sqrt(sp.mean((y_test - y) ** 2))  
 def readAsChunks(file_dir, types):
     chunks = []
     loop = True;
@@ -34,7 +37,7 @@ def readAsDic(file_dir):
             dict_data[(kv[1],kv[3])].append(pd.to_datetime(kv[9],errors='coerce'))
     return dict_data
     
-dic = readAsDic("product_market.csv")
+#dic = readAsDic("product_market.csv")
 
 df = readAsChunks("farming.csv", {8:np.float32, 9:np.float32,10:np.float32})#.replace("\N",np.nan)
 #数据发布时间 对于格式有问题的时间设为NaT
@@ -55,8 +58,8 @@ df_used = df_used.drop_duplicates()
 print 'ok'
 df = pd.merge(df,df_used,on=[1,3])
 df_used = []
-x = []
-y = []
+x = {}
+y = {}
 
 print 'ok1'
 df=df.sort_values(by=[1, 3],ascending=[1, 1])
@@ -65,41 +68,86 @@ df_test=df_test.sort_values(by=[1, 3],ascending=[1, 1])
 #df.columns = [0, 1, 2, 3, 9, 12, 13]
 key_tmp = ('02AAD134CD776815520A00CDC36A61E1','076095B1B9B448BF166FEB8A0EF80E83')
 print 'ok2'
-d1 = datetime.datetime(2015, 1, 1)
-predict_time = pd.to_datetime(['2016-01-28'])
-predict_time = (predict_time-d1).days%365
+d1 = datetime.datetime(2005, 11, 26)
+#predict_time = pd.to_datetime(['2015-12-31'])
+#predict_time = (predict_time-d1).days
 #print predict_time
-
+count = 0
+count_sum = 0 
 for index, row in df.iterrows():   # 获取每行的index、row
-    if key_tmp==(row[1],row[3]):
-        x.append(pd.to_datetime(row[12]))
-        y.append(row[9])
-    else:
-        #x = np.array(x)
-        #y = np.array(y)
-        print x
-        print y
-        y=pd.Series(y)
-        y.index = pd.Index(x)
-        start = datetime.datetime(2015,8,5)
-        end = datetime.datetime(2016,1,21)
-        print start
-        arma =ARMA(y, order =(2,0))
-        results = arma.fit()
-        a = results.predict('2015-8-5','2016-1-21', dynamic=True)
-        print a
+    count_sum += 1
+    if key_tmp!=(row[1],row[3]):
+        #linear_interp = interp1d(x, y)
+        rmse_list = []
+        model_list = []
+        for key,value in x.items():#字典x中，key是年份，value是训练集中出现的key年11月到(key+1)年2月的价格
+            if key < 2015:#2015年的数据另作处理
+                base = min(value)
+                print min(value),max(value)
+                #daylist_full = [i for i in range((max(value)-base).days+1)]
+                #datelist_full = pd.date_range(base, periods=(max(value)-base).days).tolist()#生成从key年11月到(key+1)年2月内120天的所有日期
+                x[key] = [(i-base).days for i in x[key]]
+                #interpld_x = list(set(daylist_full).difference(set(x[key]))) #求差集，即待插值的x
+                interpld_x = [i for i in range((max(value)-base).days+1)]
+                #用线性插值补全数据
+                linear_interp = interp1d(x[key], y[key])
+                interpld_y = linear_interp(interpld_x)  
+                plt.scatter(x[key], y[key], s=50) 
+                plt.plot(interpld_x, interpld_y,'-') 
+                plt.grid()  
+                plt.show()  
+                interpld_x = np.array(interpld_x)
+                interpld_y = np.array(interpld_y)
+                model = Pipeline([('poly', PolynomialFeatures(degree=7)),  
+                                ('linear', LinearRegression(fit_intercept=False))])  
+                print model
+                model.fit(interpld_x[:, np.newaxis], interpld_y)
+                predict_y = model.predict(interpld_x[:, np.newaxis])
+                rmse_list.append(rmse(predict_y, interpld_y))
+                model_list.apend(model)
+            else:
+                best_model = model_list[rmse_list.index(min(rmse_list))]
+                x = np.array(x)
+                y = np.array(y)
+        break
+        x = {}
+        y = {}
+        key_tmp = (row[1],row[3])
+        
+    tmp_date = pd.to_datetime(row[12])
+    tmp_year = 0
+    if tmp_date.month >= 11:
+        tmp_year = tmp_date.year
+        #x.append((tmp_date-d1).days)
+    elif tmp_date.month <= 2:
+        tmp_year = tmp_date.year-1
+    if(x.has_key(tmp_year)==False):
+        x.setdefault(tmp_date.year,[])
+        y.setdefault(tmp_date.year,[])
+    if tmp_date.month >= 11 or tmp_date.month <= 2:
+        x[tmp_year].append(tmp_date)
+        y[tmp_year].append(row[9])
+    if tmp_date.year < 2010:
+        count += 1
+        
+        
+        
+        '''
+        x = np.array(x)
+        y = np.array(y)
+        plt.scatter(x, y, s=50)  
+        model = Pipeline([('poly', PolynomialFeatures(degree=7)),  
+                    ('linear', LinearRegression(fit_intercept=False))])  
+        model.fit(x[:, np.newaxis], y)
+        y_predict = model.predict(predict_time[:, np.newaxis])
+        y_test = model.predict(x[:, np.newaxis])
+        plt.plot(x, y_test,'*')  
+        print y_predict
+        plt.grid()  
+        plt.show()  
         break
         '''
-        print x
-        print y
-        clf = Pipeline([('poly', PolynomialFeatures(degree=7)),  
-                    ('linear', LinearRegression(fit_intercept=False))])  
-        clf.fit(x[:, np.newaxis], y)
-        y_test = clf.predict(predict_time[:, np.newaxis])
-        print y_test
-        x = []
-        y = []
-        key_tmp = (row[1],row[3])
-        predict_time = (pd.to_datetime(row[13])-d1).days%365
-        print predict_time
-        '''
+        
+        #predict_time = (pd.to_datetime(row[13])-d1).days
+        #print predict_time
+print count_sum,count
